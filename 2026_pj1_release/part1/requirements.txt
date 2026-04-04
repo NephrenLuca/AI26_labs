@@ -1,0 +1,7 @@
+# Part 1: NumPy + optional CuPy for GPU (no PyTorch)
+numpy>=1.24.0
+Pillow>=10.0.0
+# Install ONE CuPy wheel matching your CUDA toolkit, e.g.:
+#   CUDA 12.x: pip install cupy-cuda12x
+#   CUDA 11.x: pip install cupy-cuda11x
+# Omit CuPy to run CPU-only.
