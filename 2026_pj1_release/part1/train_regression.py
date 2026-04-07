@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import os
 from datetime import datetime
 
@@ -50,6 +52,30 @@ def mae_metric(pred, target, xp) -> float:
 
 
 def save_mae_curve(train_maes: list[float], val_maes: list[float], out_path: str) -> None:
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            import matplotlib
+
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+
+        epochs = np.arange(1, len(train_maes) + 1)
+        plt.figure(figsize=(9, 5.5))
+        plt.plot(epochs, train_maes, color="#2166ac", linewidth=2, label="train_mae")
+        plt.plot(epochs, val_maes, color="#d2503c", linewidth=2, label="val_mae")
+        plt.xlabel("Epoch")
+        plt.ylabel("MAE")
+        plt.title("Regression MAE Curves: y = sin(x)")
+        plt.grid(True, alpha=0.3, linestyle="--")
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(out_path, dpi=160)
+        plt.close()
+        return
+    except Exception:
+        pass
+
+    # Fallback to Pillow plot if matplotlib is unavailable.
     width, height = 1000, 600
     margin_left, margin_right = 80, 30
     margin_top, margin_bottom = 50, 70
