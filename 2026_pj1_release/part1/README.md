@@ -111,7 +111,7 @@ python -m part1.train_regression --gpu 4 --epochs 2000 --batch-size 128 --lr 0.0
 ### 分类训练
 
 ```bash
-python -m part1.train_classification --data-dir part1/train --gpu 4 --epochs 350 --batch-size 128 --lr 0.003 --hidden 1024,512,256 --batchnorm --dropout 0.15 --scheduler plateau --lr-min 1e-5 --plateau-factor 0.5 --plateau-patience 10 --plateau-min-delta 1e-4 --aug-prob 0.9 --aug-rotate 10 --aug-translate 0.06 --aug-scale-min 0.95 --aug-scale-max 1.08 --aug-noise-std 0.02
+python -m part1.train_classification --data-dir part1/train --gpu 4 --epochs 200 --batch-size 128 --lr 0.003 --hidden 1024,512,256 --batchnorm --dropout 0.15 --scheduler plateau --lr-min 1e-5 --plateau-factor 0.5 --plateau-patience 10 --plateau-min-delta 1e-4 --aug-prob 0.9 --aug-rotate 10 --aug-translate 0.06 --aug-scale-min 0.95 --aug-scale-max 1.08 --aug-noise-std 0.02
 ```
 
 常用参数：
