@@ -20,9 +20,9 @@ except ImportError:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Regression training for y=sin(x).")
-    parser.add_argument("--epochs", type=int, default=2000)
-    parser.add_argument("--batch-size", type=int, default=2048)
-    parser.add_argument("--val-size", type=int, default=1024)
+    parser.add_argument("--epochs", type=int, default=500)
+    parser.add_argument("--batch-size", type=int, default=5000)
+    parser.add_argument("--val-size", type=int, default=1000)
     parser.add_argument("--lr", type=float, default=0.01)
     parser.add_argument("--optimizer", type=str, default="adam", choices=["adam", "sgd"])
     parser.add_argument("--adam-beta1", type=float, default=0.9)
