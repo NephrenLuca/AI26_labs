@@ -81,6 +81,14 @@ class NeuralNetwork:
         self._cache_dropout_masks: List = []
         self._cache_bn: List = []
 
+    def _random_like(self, shape):
+        """Sample U[0,1) with Generator- or RandomState-like RNGs."""
+        if hasattr(self.rng, "random"):
+            return self.rng.random(shape)
+        if hasattr(self.rng, "rand"):
+            return self.rng.rand(*shape)
+        return self.xp.random.random(shape)
+
     def _activate(self, x, kind: str):
         if kind == "relu":
             return self.xp.maximum(x, 0.0)
@@ -156,7 +164,7 @@ class NeuralNetwork:
                     pre_act = self._batchnorm_forward(pre_act, i, training=training)
                 a = self._activate(pre_act, self.hidden_activation)
                 if training and self.dropout > 0.0:
-                    mask = (self.rng.random(a.shape) >= self.dropout).astype(a.dtype) / (1.0 - self.dropout)
+                    mask = (self._random_like(a.shape) >= self.dropout).astype(a.dtype) / (1.0 - self.dropout)
                     a = a * mask
                     self._cache_dropout_masks[i] = mask
             self._cache_pre_act.append(pre_act)
