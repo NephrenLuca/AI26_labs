@@ -35,7 +35,7 @@ def parse_args() -> argparse.Namespace:
 
 def mse_loss(pred, target, xp) -> tuple[float, object]:
     diff = pred - target
-    loss = float(np.asarray(xp.mean(diff * diff)))
+    loss = float(xp.mean(diff * diff).item())
     grad = 2.0 * diff / diff.shape[0]
     return loss, grad
 

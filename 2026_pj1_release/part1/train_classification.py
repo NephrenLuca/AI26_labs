@@ -94,7 +94,7 @@ def softmax_ce_loss(logits, targets, xp) -> tuple[float, object]:
     grad = probs
     grad[xp.arange(n), targets] -= 1.0
     grad /= n
-    return float(np.asarray(loss)), grad
+    return float(loss.item()), grad
 
 
 def confusion_matrix(y_true: np.ndarray, y_pred: np.ndarray, num_classes: int) -> np.ndarray:
@@ -187,7 +187,7 @@ def main() -> None:
 
     val_logits = model.forward(x_val_xp, training=False)
     val_pred = xp.argmax(val_logits, axis=1)
-    val_acc = float(np.asarray(xp.mean((val_pred == y_val_xp).astype(xp.float32))))
+    val_acc = float(xp.mean((val_pred == y_val_xp).astype(xp.float32)).item())
     cm = confusion_matrix(to_cpu(y_val_xp), to_cpu(val_pred), num_classes=len(class_names))
 
     os.makedirs(args.output_dir, exist_ok=True)
