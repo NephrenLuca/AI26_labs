@@ -1,168 +1,127 @@
-"""
-训练入口：回归任务 — 在 ``[-π, π]`` 上拟合 ``y = sin(x)``（课程 Part 1）。
-
-运行示例（项目根目录）::
-
-    python -m part1.train_regression
-    python -m part1.train_regression --gpu 5
-    python -m part1.train_regression --gpu 6 --epochs 6000 --layers 1,256,256,1
-
-多卡机器上指定物理 GPU 4–7：``--gpu 4`` … ``--gpu 7``（需已安装与 CUDA 匹配的 CuPy）。
-"""
+"""Train regression model y = sin(x) using the manual NN."""
 
 from __future__ import annotations
 
 import argparse
-import math
-import sys
+import os
+from datetime import datetime
 
-from . import backend
-from .data_sin import eval_grid_mae
-from .hyperparams import SIN_DEFAULTS
-from .losses import MSELoss
-from .network import MLP
-from .optimizer import SGDOptimizer, make_lr_fn
-from .utils import clip_tensor_l2_norm, set_random_seed
+import numpy as np
+from PIL import Image, ImageDraw
 
-
-def _parse_layers(s: str) -> tuple[int, ...]:
-    parts = [p.strip() for p in s.split(",") if p.strip()]
-    return tuple(int(x) for x in parts)
+try:
+    from .nn import NeuralNetwork, init_backend
+except ImportError:
+    from nn import NeuralNetwork, init_backend
 
 
-def build_arg_parser() -> argparse.ArgumentParser:
-    d = SIN_DEFAULTS
-    p = argparse.ArgumentParser(
-        description="Part 1 regression: fit sin(x) on [-pi, pi] with manual backprop MLP."
-    )
-    p.add_argument(
-        "--gpu",
-        type=int,
-        default=None,
-        metavar="ID",
-        help="Physical CUDA device index (e.g. 4–7). Default: CuPy device 0, or CPU with --no-cuda.",
-    )
-    p.add_argument(
-        "--no-cuda",
-        action="store_true",
-        help="Force NumPy on CPU (ignore --gpu).",
-    )
-    p.add_argument("--seed", type=int, default=42, help="RNG seed (Python + NumPy/CuPy).")
-    p.add_argument(
-        "--layers",
-        type=str,
-        default=",".join(str(x) for x in d.layer_sizes),
-        help="Comma-separated layer widths, e.g. 1,128,128,1",
-    )
-    p.add_argument(
-        "--activation",
-        choices=("tanh", "relu"),
-        default=d.hidden_activation,
-        help="Hidden activation (output layer is always linear).",
-    )
-    p.add_argument("--epochs", type=int, default=d.epochs)
-    p.add_argument("--samples-per-epoch", type=int, default=d.samples_per_epoch)
-    p.add_argument("--batch-size", type=int, default=d.batch_size)
-    p.add_argument("--lr", type=float, default=d.lr)
-    p.add_argument(
-        "--lr-schedule",
-        choices=("constant", "step", "cosine"),
-        default=d.lr_schedule,
-    )
-    p.add_argument("--lr-step-size", type=int, default=d.lr_step_size)
-    p.add_argument("--lr-gamma", type=float, default=d.lr_gamma)
-    p.add_argument("--lr-eta-min", type=float, default=d.lr_eta_min)
-    p.add_argument("--momentum", type=float, default=d.momentum)
-    p.add_argument("--weight-decay", type=float, default=d.weight_decay)
-    p.add_argument(
-        "--grad-clip",
-        type=float,
-        default=d.grad_clip if d.grad_clip is not None else -1.0,
-        help="L2 clip on loss gradient; use negative value to disable.",
-    )
-    p.add_argument("--log-every", type=int, default=200, help="Print MAE every N epochs.")
-    p.add_argument(
-        "--mae-threshold",
-        type=float,
-        default=0.01,
-        help="Report pass/fail vs course requirement (mean abs error).",
-    )
-    p.add_argument(
-        "--exit-on-mae-fail",
-        action="store_true",
-        help="Exit with code 1 if final MAE >= --mae-threshold (for CI / batch jobs).",
-    )
-    return p
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Regression training for y=sin(x).")
+    parser.add_argument("--epochs", type=int, default=2000)
+    parser.add_argument("--batch-size", type=int, default=128)
+    parser.add_argument("--lr", type=float, default=0.01)
+    parser.add_argument("--hidden", type=str, default="64,64")
+    parser.add_argument("--activation", type=str, default="tanh", choices=["relu", "tanh", "sigmoid"])
+    parser.add_argument("--dropout", type=float, default=0.0)
+    parser.add_argument("--batchnorm", action="store_true")
+    parser.add_argument("--bn-momentum", type=float, default=0.9)
+    parser.add_argument("--bn-eps", type=float, default=1e-5)
+    parser.add_argument("--gpu", type=int, default=4)
+    parser.add_argument("--no-cuda", action="store_true")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--output-dir", type=str, default=os.path.dirname(__file__))
+    return parser.parse_args()
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = build_arg_parser().parse_args(argv)
-    layer_sizes = _parse_layers(args.layers)
-    if len(layer_sizes) < 2 or layer_sizes[0] != 1 or layer_sizes[-1] != 1:
-        print(
-            "Warning: sin regression expects input dim 1 and output dim 1; "
-            f"got {layer_sizes}.",
-            file=sys.stderr,
-        )
+def mse_loss(pred, target, xp) -> tuple[float, object]:
+    diff = pred - target
+    loss = float(np.asarray(xp.mean(diff * diff)))
+    grad = 2.0 * diff / diff.shape[0]
+    return loss, grad
 
-    grad_clip = None if args.grad_clip < 0 else args.grad_clip
 
-    backend.init_backend(use_cuda=not args.no_cuda, gpu_id=args.gpu)
-    xp = backend.get_xp()
-    set_random_seed(args.seed)
+def save_loss_curve(losses: list[float], out_path: str) -> None:
+    width, height = 1000, 600
+    margin_left, margin_right = 80, 30
+    margin_top, margin_bottom = 50, 70
 
-    net = MLP(list(layer_sizes), hidden_activation=args.activation)
-    criterion = MSELoss()
-    opt = SGDOptimizer(
-        net.linear_layers(),
-        lr=args.lr,
-        momentum=args.momentum,
-        weight_decay=args.weight_decay,
-    )
-    lr_fn = make_lr_fn(
-        args.lr_schedule,
-        args.lr,
-        args.epochs,
-        step_size=args.lr_step_size,
-        gamma=args.lr_gamma,
-        eta_min=args.lr_eta_min,
+    img = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(img)
+
+    x0, y0 = margin_left, height - margin_bottom
+    x1, y1 = width - margin_right, margin_top
+    draw.line((x0, y0, x1, y0), fill="black", width=2)
+    draw.line((x0, y0, x0, y1), fill="black", width=2)
+    draw.text((x0 + 5, y1 - 28), "Loss", fill="black")
+    draw.text((x1 - 40, y0 + 8), "Epoch", fill="black")
+    draw.text((width // 2 - 150, 12), "Regression Training Curve: y = sin(x)", fill="black")
+
+    if len(losses) == 0:
+        img.save(out_path)
+        return
+
+    y_min = min(losses)
+    y_max = max(losses)
+    if abs(y_max - y_min) < 1e-12:
+        y_max = y_min + 1e-12
+
+    points = []
+    n = len(losses)
+    for i, loss in enumerate(losses):
+        px = x0 + (x1 - x0) * (i / max(1, n - 1))
+        py = y0 - (y0 - y1) * ((loss - y_min) / (y_max - y_min))
+        points.append((px, py))
+
+    if len(points) >= 2:
+        draw.line(points, fill=(33, 102, 172), width=2)
+    else:
+        px, py = points[0]
+        draw.ellipse((px - 2, py - 2, px + 2, py + 2), fill=(33, 102, 172))
+
+    draw.text((x0, y0 + 8), "1", fill="black")
+    draw.text((x1 - 15, y0 + 8), str(n), fill="black")
+    draw.text((8, y0 - 6), f"{y_min:.4f}", fill="black")
+    draw.text((8, y1 - 6), f"{y_max:.4f}", fill="black")
+    draw.text((x0 + 10, y1 + 8), f"Final loss: {losses[-1]:.6f}", fill="black")
+    img.save(out_path)
+
+
+def main() -> None:
+    args = parse_args()
+    use_cuda = not args.no_cuda
+    xp, _, rng = init_backend(use_cuda=use_cuda, gpu_id=args.gpu, seed=args.seed)
+    hidden_sizes = [int(v) for v in args.hidden.split(",") if v.strip()]
+    model = NeuralNetwork(
+        layer_sizes=[1, *hidden_sizes, 1],
+        hidden_activation=args.activation,
+        output_activation="linear",
+        seed=args.seed,
+        xp=xp,
+        rng=rng,
+        use_batchnorm=args.batchnorm,
+        bn_momentum=args.bn_momentum,
+        bn_eps=args.bn_eps,
+        dropout=args.dropout,
     )
 
-    batches = max(1, args.samples_per_epoch // args.batch_size)
-    mode = f"CuPy GPU {backend.device_id()}" if backend.is_cuda() else "NumPy CPU"
-    print(f"Backend: {mode} | layers={layer_sizes} | batches/epoch={batches}")
+    history = []
+    for _ in range(args.epochs):
+        x = rng.uniform(-np.pi, np.pi, size=(args.batch_size, 1)).astype(xp.float32)
+        y = xp.sin(x)
+        pred = model.forward(x, training=True)
+        loss, grad = mse_loss(pred, y, xp)
+        model.backward(grad, lr=args.lr)
+        history.append(loss)
 
-    for epoch in range(args.epochs):
-        opt.lr = lr_fn(epoch)
-        epoch_loss = 0.0
-        for _ in range(batches):
-            x = xp.random.uniform(
-                -math.pi, math.pi, size=(args.batch_size, 1)
-            ).astype(xp.float32)
-            y = xp.sin(x)
-            pred = net.forward(x)
-            loss = criterion.forward(pred, y)
-            epoch_loss += float(backend.to_cpu_array(loss))
-            g = criterion.backward()
-            clip_tensor_l2_norm(g, grad_clip)
-            net.backward(g)
-            opt.step()
-        epoch_loss /= batches
+    os.makedirs(args.output_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    fig_path = os.path.join(args.output_dir, f"regression_loss_{timestamp}.png")
 
-        if epoch % args.log_every == 0 or epoch == args.epochs - 1:
-            mae = eval_grid_mae(lambda t: net.forward(t), xp, n_points=10_000)
-            ok = "OK" if mae < args.mae_threshold else "need tuning"
-            print(
-                f"epoch {epoch:5d}  lr={opt.lr:.6g}  "
-                f"train_mse≈{epoch_loss:.6f}  eval_mae={mae:.6f}  ({ok} vs {args.mae_threshold})"
-            )
+    save_loss_curve(history, fig_path)
 
-    final_mae = eval_grid_mae(lambda t: net.forward(t), xp, n_points=50_000)
-    print(f"Final eval MAE (50k samples): {final_mae:.6f}")
-    if args.exit_on_mae_fail and final_mae >= args.mae_threshold:
-        return 1
-    return 0
+    print(f"Training finished. Final train loss: {history[-1]:.6f}")
+    print(f"Saved figure: {fig_path}")
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
