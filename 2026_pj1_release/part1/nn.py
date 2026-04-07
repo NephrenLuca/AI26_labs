@@ -35,6 +35,10 @@ class NeuralNetwork:
         bn_momentum: float = 0.9,
         bn_eps: float = 1e-5,
         dropout: float = 0.0,
+        optimizer: str = "adam",
+        adam_beta1: float = 0.9,
+        adam_beta2: float = 0.999,
+        adam_eps: float = 1e-8,
     ) -> None:
         if len(layer_sizes) < 2:
             raise ValueError("layer_sizes must contain at least input and output dims.")
@@ -44,6 +48,8 @@ class NeuralNetwork:
             raise ValueError("output_activation must be one of: linear/tanh/sigmoid")
         if not (0.0 <= dropout < 1.0):
             raise ValueError("dropout must be in [0, 1).")
+        if optimizer not in {"sgd", "adam"}:
+            raise ValueError("optimizer must be 'sgd' or 'adam'.")
 
         self.xp = xp
         self.rng = rng if rng is not None else np.random.default_rng(seed)
@@ -53,6 +59,11 @@ class NeuralNetwork:
         self.bn_momentum = float(bn_momentum)
         self.bn_eps = float(bn_eps)
         self.dropout = float(dropout)
+        self.optimizer = optimizer
+        self.adam_beta1 = float(adam_beta1)
+        self.adam_beta2 = float(adam_beta2)
+        self.adam_eps = float(adam_eps)
+        self._opt_step = 0
 
         np_rng = np.random.default_rng(seed)
         self.weights: List = []
@@ -75,6 +86,16 @@ class NeuralNetwork:
             self.bn_beta.append(self.xp.zeros((1, out_dim), dtype=self.xp.float32))
             self.bn_running_mean.append(self.xp.zeros((1, out_dim), dtype=self.xp.float32))
             self.bn_running_var.append(self.xp.ones((1, out_dim), dtype=self.xp.float32))
+
+        # Adam states for all trainable parameters.
+        self._m_w = [self.xp.zeros_like(w) for w in self.weights]
+        self._v_w = [self.xp.zeros_like(w) for w in self.weights]
+        self._m_b = [self.xp.zeros_like(b) for b in self.biases]
+        self._v_b = [self.xp.zeros_like(b) for b in self.biases]
+        self._m_bg = [self.xp.zeros_like(g) for g in self.bn_gamma]
+        self._v_bg = [self.xp.zeros_like(g) for g in self.bn_gamma]
+        self._m_bb = [self.xp.zeros_like(b) for b in self.bn_beta]
+        self._v_bb = [self.xp.zeros_like(b) for b in self.bn_beta]
 
         self._cache_a: List = []
         self._cache_pre_act: List = []
@@ -128,7 +149,7 @@ class NeuralNetwork:
         z_norm = (z - self.bn_running_mean[hidden_idx]) / self.xp.sqrt(self.bn_running_var[hidden_idx] + self.bn_eps)
         return self.bn_gamma[hidden_idx] * z_norm + self.bn_beta[hidden_idx]
 
-    def _batchnorm_backward(self, grad_out, hidden_idx: int, lr: float):
+    def _batchnorm_backward(self, grad_out, hidden_idx: int):
         z_norm, z_centered, std_inv, batch_size = self._cache_bn[hidden_idx]
         gamma = self.bn_gamma[hidden_idx]
 
@@ -140,10 +161,21 @@ class NeuralNetwork:
             -2.0 * z_centered, axis=0, keepdims=True
         )
         dz = dz_norm * std_inv + dvar * (2.0 / batch_size) * z_centered + dmu / batch_size
+        return dz, dgamma, dbeta
 
-        self.bn_gamma[hidden_idx] -= lr * dgamma
-        self.bn_beta[hidden_idx] -= lr * dbeta
-        return dz
+    def _apply_update(self, param, grad, m, v, lr: float):
+        if self.optimizer == "sgd":
+            param -= lr * grad
+            return
+        m *= self.adam_beta1
+        m += (1.0 - self.adam_beta1) * grad
+        v *= self.adam_beta2
+        v += (1.0 - self.adam_beta2) * (grad * grad)
+        bias_c1 = 1.0 - (self.adam_beta1**self._opt_step)
+        bias_c2 = 1.0 - (self.adam_beta2**self._opt_step)
+        m_hat = m / bias_c1
+        v_hat = v / bias_c2
+        param -= lr * m_hat / (self.xp.sqrt(v_hat) + self.adam_eps)
 
     def forward(self, x, training: bool = True):
         a = self.xp.asarray(x, dtype=self.xp.float32)
@@ -175,6 +207,7 @@ class NeuralNetwork:
         if not self._cache_a or not self._cache_pre_act:
             raise RuntimeError("forward must be called before backward.")
 
+        self._opt_step += 1
         grad = self.xp.asarray(grad_output, dtype=self.xp.float32)
         for i in reversed(range(self.num_layers)):
             pre_act = self._cache_pre_act[i]
@@ -189,7 +222,9 @@ class NeuralNetwork:
                     grad = grad * self._cache_dropout_masks[i]
                 grad_pre = grad * self._activation_grad(pre_act, self.hidden_activation)
                 if self.use_batchnorm:
-                    grad_linear = self._batchnorm_backward(grad_pre, i, lr)
+                    grad_linear, dgamma, dbeta = self._batchnorm_backward(grad_pre, i)
+                    self._apply_update(self.bn_gamma[i], dgamma, self._m_bg[i], self._v_bg[i], lr)
+                    self._apply_update(self.bn_beta[i], dbeta, self._m_bb[i], self._v_bb[i], lr)
                 else:
                     grad_linear = grad_pre
 
@@ -197,5 +232,5 @@ class NeuralNetwork:
             grad_w = (a_prev.T @ grad_linear) / batch_size
             grad_b = self.xp.mean(grad_linear, axis=0, keepdims=True)
             grad = grad_linear @ self.weights[i].T
-            self.weights[i] -= lr * grad_w
-            self.biases[i] -= lr * grad_b
+            self._apply_update(self.weights[i], grad_w, self._m_w[i], self._v_w[i], lr)
+            self._apply_update(self.biases[i], grad_b, self._m_b[i], self._v_b[i], lr)

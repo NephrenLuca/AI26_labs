@@ -20,6 +20,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--epochs", type=int, default=2000)
     parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--lr", type=float, default=0.01)
+    parser.add_argument("--optimizer", type=str, default="adam", choices=["adam", "sgd"])
+    parser.add_argument("--adam-beta1", type=float, default=0.9)
+    parser.add_argument("--adam-beta2", type=float, default=0.999)
+    parser.add_argument("--adam-eps", type=float, default=1e-8)
     parser.add_argument("--hidden", type=str, default="64,64")
     parser.add_argument("--activation", type=str, default="tanh", choices=["relu", "tanh", "sigmoid"])
     parser.add_argument("--dropout", type=float, default=0.0)
@@ -102,6 +106,10 @@ def main() -> None:
         bn_momentum=args.bn_momentum,
         bn_eps=args.bn_eps,
         dropout=args.dropout,
+        optimizer=args.optimizer,
+        adam_beta1=args.adam_beta1,
+        adam_beta2=args.adam_beta2,
+        adam_eps=args.adam_eps,
     )
 
     history = []
