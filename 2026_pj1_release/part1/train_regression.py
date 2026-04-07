@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import argparse
-import contextlib
-import io
 import os
 from datetime import datetime
 
+import matplotlib
 import numpy as np
-from PIL import Image, ImageDraw
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 try:
     from .nn import NeuralNetwork, init_backend
@@ -52,88 +53,18 @@ def mae_metric(pred, target, xp) -> float:
 
 
 def save_mae_curve(train_maes: list[float], val_maes: list[float], out_path: str) -> None:
-    try:
-        with contextlib.redirect_stderr(io.StringIO()):
-            import matplotlib
-
-            matplotlib.use("Agg")
-            import matplotlib.pyplot as plt
-
-        epochs = np.arange(1, len(train_maes) + 1)
-        plt.figure(figsize=(9, 5.5))
-        plt.plot(epochs, train_maes, color="#2166ac", linewidth=2, label="train_mae")
-        plt.plot(epochs, val_maes, color="#d2503c", linewidth=2, label="val_mae")
-        plt.xlabel("Epoch")
-        plt.ylabel("MAE")
-        plt.title("Regression MAE Curves: y = sin(x)")
-        plt.grid(True, alpha=0.3, linestyle="--")
-        plt.legend()
-        plt.tight_layout()
-        plt.savefig(out_path, dpi=160)
-        plt.close()
-        return
-    except Exception:
-        pass
-
-    # Fallback to Pillow plot if matplotlib is unavailable.
-    width, height = 1000, 600
-    margin_left, margin_right = 80, 30
-    margin_top, margin_bottom = 50, 70
-
-    img = Image.new("RGB", (width, height), "white")
-    draw = ImageDraw.Draw(img)
-
-    x0, y0 = margin_left, height - margin_bottom
-    x1, y1 = width - margin_right, margin_top
-    draw.line((x0, y0, x1, y0), fill="black", width=2)
-    draw.line((x0, y0, x0, y1), fill="black", width=2)
-    draw.text((x0 + 5, y1 - 28), "MAE", fill="black")
-    draw.text((x1 - 40, y0 + 8), "Epoch", fill="black")
-    draw.text((width // 2 - 170, 12), "Regression MAE Curve: y = sin(x)", fill="black")
-
-    if len(train_maes) == 0:
-        img.save(out_path)
-        return
-
-    all_maes = train_maes + val_maes
-    y_min = min(all_maes)
-    y_max = max(all_maes)
-    if abs(y_max - y_min) < 1e-12:
-        y_max = y_min + 1e-12
-
-    train_points = []
-    val_points = []
-    n = len(train_maes)
-    for i, mae in enumerate(train_maes):
-        px = x0 + (x1 - x0) * (i / max(1, n - 1))
-        py = y0 - (y0 - y1) * ((mae - y_min) / (y_max - y_min))
-        train_points.append((px, py))
-
-    for i, mae in enumerate(val_maes):
-        px = x0 + (x1 - x0) * (i / max(1, n - 1))
-        py = y0 - (y0 - y1) * ((mae - y_min) / (y_max - y_min))
-        val_points.append((px, py))
-
-    if len(train_points) >= 2:
-        draw.line(train_points, fill=(33, 102, 172), width=2)
-    else:
-        px, py = train_points[0]
-        draw.ellipse((px - 2, py - 2, px + 2, py + 2), fill=(33, 102, 172))
-    if len(val_points) >= 2:
-        draw.line(val_points, fill=(210, 80, 60), width=2)
-    elif len(val_points) == 1:
-        px, py = val_points[0]
-        draw.ellipse((px - 2, py - 2, px + 2, py + 2), fill=(210, 80, 60))
-
-    draw.text((x0, y0 + 8), "1", fill="black")
-    draw.text((x1 - 15, y0 + 8), str(n), fill="black")
-    draw.text((8, y0 - 6), f"{y_min:.4f}", fill="black")
-    draw.text((8, y1 - 6), f"{y_max:.4f}", fill="black")
-    draw.text((x0 + 10, y1 + 8), f"Final train MAE: {train_maes[-1]:.6f}", fill=(33, 102, 172))
-    draw.text((x0 + 10, y1 + 28), f"Final val MAE: {val_maes[-1]:.6f}", fill=(210, 80, 60))
-    draw.text((x1 - 180, y1 + 8), "Blue: train_mae", fill=(33, 102, 172))
-    draw.text((x1 - 180, y1 + 28), "Red: val_mae", fill=(210, 80, 60))
-    img.save(out_path)
+    epochs = np.arange(1, len(train_maes) + 1)
+    plt.figure(figsize=(9, 5.5))
+    plt.plot(epochs, train_maes, color="#2166ac", linewidth=2, label="train_mae")
+    plt.plot(epochs, val_maes, color="#d2503c", linewidth=2, label="val_mae")
+    plt.xlabel("Epoch")
+    plt.ylabel("MAE")
+    plt.title("Regression MAE Curves: y = sin(x)")
+    plt.grid(True, alpha=0.3, linestyle="--")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=160)
+    plt.close()
 
 
 def main() -> None:
