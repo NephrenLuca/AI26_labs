@@ -105,7 +105,7 @@ python -m part1.train_regression --gpu 4 --epochs 2000 --batch-size 128 --lr 0.0
 ### 分类训练
 
 ```bash
-python -m part1.train_classification --data-dir part1/train --gpu 7 --epochs 60 --batch-size 64 --lr 0.01 --hidden 256,128 --batchnorm --dropout 0.3
+python -m part1.train_classification --data-dir part1/train --gpu 4 --epochs 200 --batch-size 64 --lr 0.01 --hidden 512,256,128 --batchnorm --dropout 0.15
 ```
 
 常用参数：

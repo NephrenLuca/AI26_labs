@@ -38,6 +38,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--val-ratio", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output-dir", type=str, default=os.path.dirname(__file__))
+    parser.add_argument("--no-augment", action="store_true")
+    parser.add_argument("--aug-prob", type=float, default=0.8)
+    parser.add_argument("--aug-rotate", type=float, default=12.0)
+    parser.add_argument("--aug-translate", type=float, default=0.08)
+    parser.add_argument("--aug-scale-min", type=float, default=0.92)
+    parser.add_argument("--aug-scale-max", type=float, default=1.10)
+    parser.add_argument("--aug-noise-std", type=float, default=0.03)
     return parser.parse_args()
 
 
@@ -87,6 +94,62 @@ def train_val_split(x: np.ndarray, y: np.ndarray, val_ratio: float, seed: int):
     train_idx = idx[:split]
     val_idx = idx[split:]
     return x[train_idx], y[train_idx], x[val_idx], y[val_idx]
+
+
+def _scale_and_center(img: Image.Image, scale: float, target_hw: Tuple[int, int]) -> Image.Image:
+    h, w = target_hw
+    scaled_h = max(1, int(round(h * scale)))
+    scaled_w = max(1, int(round(w * scale)))
+    resized = img.resize((scaled_w, scaled_h), resample=Image.BILINEAR)
+    if scale >= 1.0:
+        left = (scaled_w - w) // 2
+        top = (scaled_h - h) // 2
+        return resized.crop((left, top, left + w, top + h))
+    canvas = Image.new("L", (w, h), 0)
+    left = (w - scaled_w) // 2
+    top = (h - scaled_h) // 2
+    canvas.paste(resized, (left, top))
+    return canvas
+
+
+def augment_batch(
+    x_batch: np.ndarray,
+    image_size: Tuple[int, int],
+    rng: np.random.Generator,
+    prob: float,
+    max_rotate_deg: float,
+    max_translate_ratio: float,
+    scale_min: float,
+    scale_max: float,
+    noise_std: float,
+) -> np.ndarray:
+    h, w = image_size
+    aug = np.empty_like(x_batch, dtype=np.float32)
+    max_dx = int(round(max_translate_ratio * w))
+    max_dy = int(round(max_translate_ratio * h))
+    for i, flat in enumerate(x_batch):
+        arr = np.clip(flat.reshape(h, w), 0.0, 1.0)
+        if rng.random() >= prob:
+            aug[i] = arr.reshape(-1).astype(np.float32)
+            continue
+
+        img = Image.fromarray((arr * 255.0).astype(np.uint8), mode="L")
+        scale = float(rng.uniform(scale_min, scale_max))
+        img = _scale_and_center(img, scale=scale, target_hw=(h, w))
+
+        angle = float(rng.uniform(-max_rotate_deg, max_rotate_deg))
+        img = img.rotate(angle, resample=Image.BILINEAR, fillcolor=0)
+
+        tx = int(rng.integers(-max_dx, max_dx + 1)) if max_dx > 0 else 0
+        ty = int(rng.integers(-max_dy, max_dy + 1)) if max_dy > 0 else 0
+        img = img.transform((w, h), Image.AFFINE, (1, 0, tx, 0, 1, ty), resample=Image.BILINEAR, fillcolor=0)
+
+        out = np.asarray(img, dtype=np.float32) / 255.0
+        if noise_std > 0.0:
+            out = out + rng.normal(loc=0.0, scale=noise_std, size=out.shape).astype(np.float32)
+        out = np.clip(out, 0.0, 1.0)
+        aug[i] = out.reshape(-1).astype(np.float32)
+    return aug
 
 
 def softmax_ce_loss(logits, targets, xp) -> tuple[float, object]:
@@ -147,6 +210,17 @@ def save_confusion_matrix_image(cm: np.ndarray, class_names: List[str], val_acc:
 
 def main() -> None:
     args = parse_args()
+    if not (0.0 <= args.aug_prob <= 1.0):
+        raise ValueError("--aug-prob must be in [0, 1].")
+    if args.aug_translate < 0.0:
+        raise ValueError("--aug-translate must be >= 0.")
+    if args.aug_scale_min <= 0.0 or args.aug_scale_max <= 0.0:
+        raise ValueError("--aug-scale-min/--aug-scale-max must be > 0.")
+    if args.aug_scale_min > args.aug_scale_max:
+        raise ValueError("--aug-scale-min must be <= --aug-scale-max.")
+    if args.aug_noise_std < 0.0:
+        raise ValueError("--aug-noise-std must be >= 0.")
+
     use_cuda = not args.no_cuda
     xp, to_cpu, rng = init_backend(use_cuda=use_cuda, gpu_id=args.gpu, seed=args.seed)
     np_rng = np.random.default_rng(args.seed)
@@ -175,8 +249,6 @@ def main() -> None:
         adam_eps=args.adam_eps,
     )
 
-    x_train_xp = xp.asarray(x_train, dtype=xp.float32)
-    y_train_xp = xp.asarray(y_train, dtype=xp.int64)
     x_val_xp = xp.asarray(x_val, dtype=xp.float32)
     y_val_xp = xp.asarray(y_val, dtype=xp.int64)
 
@@ -186,9 +258,21 @@ def main() -> None:
         np_rng.shuffle(idx)
         for start in range(0, n_train, args.batch_size):
             b = idx[start : start + args.batch_size]
-            b_xp = xp.asarray(b, dtype=xp.int64)
-            xb = x_train_xp[b_xp]
-            yb = y_train_xp[b_xp]
+            xb_np = x_train[b]
+            if not args.no_augment:
+                xb_np = augment_batch(
+                    xb_np,
+                    image_size=(h, w),
+                    rng=np_rng,
+                    prob=args.aug_prob,
+                    max_rotate_deg=args.aug_rotate,
+                    max_translate_ratio=args.aug_translate,
+                    scale_min=args.aug_scale_min,
+                    scale_max=args.aug_scale_max,
+                    noise_std=args.aug_noise_std,
+                )
+            xb = xp.asarray(xb_np, dtype=xp.float32)
+            yb = xp.asarray(y_train[b], dtype=xp.int64)
             logits = model.forward(xb, training=True)
             _, grad = softmax_ce_loss(logits, yb, xp)
             model.backward(grad, lr=args.lr)
