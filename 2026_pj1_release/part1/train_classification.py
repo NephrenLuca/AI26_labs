@@ -179,14 +179,27 @@ def evaluate_classification(model: NeuralNetwork, x_eval, y_eval, xp) -> tuple[f
     return val_acc, val_loss, val_pred
 
 
+def _to_object_array(tensors: List[np.ndarray]) -> np.ndarray:
+    packed = np.empty(len(tensors), dtype=object)
+    for i, t in enumerate(tensors):
+        packed[i] = t
+    return packed
+
+
 def snapshot_model_state(model: NeuralNetwork, to_cpu_fn) -> dict:
+    weights = [to_cpu_fn(w) for w in model.weights]
+    biases = [to_cpu_fn(b) for b in model.biases]
+    bn_gamma = [to_cpu_fn(g) for g in model.bn_gamma]
+    bn_beta = [to_cpu_fn(b) for b in model.bn_beta]
+    bn_running_mean = [to_cpu_fn(m) for m in model.bn_running_mean]
+    bn_running_var = [to_cpu_fn(v) for v in model.bn_running_var]
     state = {
-        "weights": np.asarray([to_cpu_fn(w) for w in model.weights], dtype=object),
-        "biases": np.asarray([to_cpu_fn(b) for b in model.biases], dtype=object),
-        "bn_gamma": np.asarray([to_cpu_fn(g) for g in model.bn_gamma], dtype=object),
-        "bn_beta": np.asarray([to_cpu_fn(b) for b in model.bn_beta], dtype=object),
-        "bn_running_mean": np.asarray([to_cpu_fn(m) for m in model.bn_running_mean], dtype=object),
-        "bn_running_var": np.asarray([to_cpu_fn(v) for v in model.bn_running_var], dtype=object),
+        "weights": _to_object_array(weights),
+        "biases": _to_object_array(biases),
+        "bn_gamma": _to_object_array(bn_gamma),
+        "bn_beta": _to_object_array(bn_beta),
+        "bn_running_mean": _to_object_array(bn_running_mean),
+        "bn_running_var": _to_object_array(bn_running_var),
     }
     return state
 
