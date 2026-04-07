@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import os
 from datetime import datetime
 from typing import List, Tuple
@@ -38,6 +39,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--val-ratio", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output-dir", type=str, default=os.path.dirname(__file__))
+    parser.add_argument("--scheduler", type=str, default="plateau", choices=["none", "plateau", "cosine"])
+    parser.add_argument("--lr-min", type=float, default=1e-5)
+    parser.add_argument("--plateau-factor", type=float, default=0.5)
+    parser.add_argument("--plateau-patience", type=int, default=12)
+    parser.add_argument("--plateau-min-delta", type=float, default=1e-4)
+    parser.add_argument("--no-restore-best", action="store_true")
     parser.add_argument("--no-augment", action="store_true")
     parser.add_argument("--aug-prob", type=float, default=0.8)
     parser.add_argument("--aug-rotate", type=float, default=12.0)
@@ -164,6 +171,42 @@ def softmax_ce_loss(logits, targets, xp) -> tuple[float, object]:
     return float(loss.item()), grad
 
 
+def evaluate_classification(model: NeuralNetwork, x_eval, y_eval, xp) -> tuple[float, float, object]:
+    logits = model.forward(x_eval, training=False)
+    val_pred = xp.argmax(logits, axis=1)
+    val_acc = float(xp.mean((val_pred == y_eval).astype(xp.float32)).item())
+    val_loss, _ = softmax_ce_loss(logits, y_eval, xp)
+    return val_acc, val_loss, val_pred
+
+
+def snapshot_model_state(model: NeuralNetwork, to_cpu_fn) -> dict:
+    state = {
+        "weights": np.asarray([to_cpu_fn(w) for w in model.weights], dtype=object),
+        "biases": np.asarray([to_cpu_fn(b) for b in model.biases], dtype=object),
+        "bn_gamma": np.asarray([to_cpu_fn(g) for g in model.bn_gamma], dtype=object),
+        "bn_beta": np.asarray([to_cpu_fn(b) for b in model.bn_beta], dtype=object),
+        "bn_running_mean": np.asarray([to_cpu_fn(m) for m in model.bn_running_mean], dtype=object),
+        "bn_running_var": np.asarray([to_cpu_fn(v) for v in model.bn_running_var], dtype=object),
+    }
+    return state
+
+
+def load_model_state(model: NeuralNetwork, state: dict) -> None:
+    model.weights = [model.xp.asarray(w, dtype=model.xp.float32) for w in state["weights"]]
+    model.biases = [model.xp.asarray(b, dtype=model.xp.float32) for b in state["biases"]]
+    model.bn_gamma = [model.xp.asarray(g, dtype=model.xp.float32) for g in state["bn_gamma"]]
+    model.bn_beta = [model.xp.asarray(b, dtype=model.xp.float32) for b in state["bn_beta"]]
+    model.bn_running_mean = [model.xp.asarray(m, dtype=model.xp.float32) for m in state["bn_running_mean"]]
+    model.bn_running_var = [model.xp.asarray(v, dtype=model.xp.float32) for v in state["bn_running_var"]]
+
+
+def compute_cosine_lr(base_lr: float, min_lr: float, epoch_idx: int, total_epochs: int) -> float:
+    if total_epochs <= 1:
+        return base_lr
+    t = epoch_idx / float(total_epochs - 1)
+    return float(min_lr + 0.5 * (base_lr - min_lr) * (1.0 + math.cos(math.pi * t)))
+
+
 def confusion_matrix(y_true: np.ndarray, y_pred: np.ndarray, num_classes: int) -> np.ndarray:
     cm = np.zeros((num_classes, num_classes), dtype=np.int64)
     for t, p in zip(y_true, y_pred):
@@ -220,6 +263,18 @@ def main() -> None:
         raise ValueError("--aug-scale-min must be <= --aug-scale-max.")
     if args.aug_noise_std < 0.0:
         raise ValueError("--aug-noise-std must be >= 0.")
+    if args.lr <= 0.0:
+        raise ValueError("--lr must be > 0.")
+    if args.lr_min <= 0.0:
+        raise ValueError("--lr-min must be > 0.")
+    if args.lr_min > args.lr:
+        raise ValueError("--lr-min must be <= --lr.")
+    if not (0.0 < args.plateau_factor < 1.0):
+        raise ValueError("--plateau-factor must be in (0, 1).")
+    if args.plateau_patience < 1:
+        raise ValueError("--plateau-patience must be >= 1.")
+    if args.plateau_min_delta < 0.0:
+        raise ValueError("--plateau-min-delta must be >= 0.")
 
     use_cuda = not args.no_cuda
     xp, to_cpu, rng = init_backend(use_cuda=use_cuda, gpu_id=args.gpu, seed=args.seed)
@@ -252,8 +307,22 @@ def main() -> None:
     x_val_xp = xp.asarray(x_val, dtype=xp.float32)
     y_val_xp = xp.asarray(y_val, dtype=xp.int64)
 
+    os.makedirs(args.output_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    best_ckpt_path = os.path.join(args.output_dir, f"classification_best_{timestamp}.npz")
+
+    base_lr = float(args.lr)
+    current_lr = float(args.lr)
+    best_val_acc = -1.0
+    best_epoch = -1
+    epochs_since_improve = 0
+    best_state = None
+
     n_train = x_train.shape[0]
-    for _ in range(args.epochs):
+    for epoch in range(args.epochs):
+        if args.scheduler == "cosine":
+            current_lr = compute_cosine_lr(base_lr=base_lr, min_lr=args.lr_min, epoch_idx=epoch, total_epochs=args.epochs)
+
         idx = np.arange(n_train)
         np_rng.shuffle(idx)
         for start in range(0, n_train, args.batch_size):
@@ -275,20 +344,55 @@ def main() -> None:
             yb = xp.asarray(y_train[b], dtype=xp.int64)
             logits = model.forward(xb, training=True)
             _, grad = softmax_ce_loss(logits, yb, xp)
-            model.backward(grad, lr=args.lr)
+            model.backward(grad, lr=current_lr)
 
-    val_logits = model.forward(x_val_xp, training=False)
-    val_pred = xp.argmax(val_logits, axis=1)
-    val_acc = float(xp.mean((val_pred == y_val_xp).astype(xp.float32)).item())
+        val_acc, val_loss, _ = evaluate_classification(model=model, x_eval=x_val_xp, y_eval=y_val_xp, xp=xp)
+        improved = val_acc > (best_val_acc + args.plateau_min_delta)
+        if improved:
+            best_val_acc = val_acc
+            best_epoch = epoch + 1
+            epochs_since_improve = 0
+            best_state = snapshot_model_state(model, to_cpu)
+            np.savez_compressed(best_ckpt_path, **best_state)
+            print(
+                f"Epoch {epoch + 1:4d}/{args.epochs} | lr={current_lr:.6f} | val_loss={val_loss:.4f} | "
+                f"val_acc={val_acc:.4f} | best=YES"
+            )
+        else:
+            epochs_since_improve += 1
+            print(
+                f"Epoch {epoch + 1:4d}/{args.epochs} | lr={current_lr:.6f} | val_loss={val_loss:.4f} | "
+                f"val_acc={val_acc:.4f} | best={best_val_acc:.4f}"
+            )
+            if args.scheduler == "plateau" and epochs_since_improve >= args.plateau_patience and current_lr > args.lr_min:
+                new_lr = max(args.lr_min, current_lr * args.plateau_factor)
+                if new_lr < current_lr:
+                    print(
+                        f"  Plateau detected: reduce lr from {current_lr:.6f} to {new_lr:.6f} "
+                        f"(no improvement for {epochs_since_improve} epochs)."
+                    )
+                    current_lr = new_lr
+                epochs_since_improve = 0
+
+    if best_state is None:
+        best_state = snapshot_model_state(model, to_cpu)
+        np.savez_compressed(best_ckpt_path, **best_state)
+        best_val_acc = 0.0
+        best_epoch = args.epochs
+
+    if not args.no_restore_best:
+        load_model_state(model, best_state)
+
+    val_acc, _, val_pred = evaluate_classification(model=model, x_eval=x_val_xp, y_eval=y_val_xp, xp=xp)
     cm = confusion_matrix(to_cpu(y_val_xp), to_cpu(val_pred), num_classes=len(class_names))
 
-    os.makedirs(args.output_dir, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     fig_path = os.path.join(args.output_dir, f"classification_confusion_{timestamp}.png")
 
     save_confusion_matrix_image(cm, class_names, val_acc, fig_path)
 
     print(f"Training finished. Validation accuracy: {val_acc:.4f}")
+    print(f"Best validation accuracy: {best_val_acc:.4f} (epoch {best_epoch})")
+    print(f"Saved best checkpoint: {best_ckpt_path}")
     print(f"Saved figure: {fig_path}")
 
 
