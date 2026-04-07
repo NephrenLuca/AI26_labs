@@ -18,7 +18,7 @@ except ImportError:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Regression training for y=sin(x).")
     parser.add_argument("--epochs", type=int, default=2000)
-    parser.add_argument("--batch-size", type=int, default=128)
+    parser.add_argument("--batch-size", type=int, default=2048)
     parser.add_argument("--lr", type=float, default=0.01)
     parser.add_argument("--optimizer", type=str, default="adam", choices=["adam", "sgd"])
     parser.add_argument("--adam-beta1", type=float, default=0.9)
@@ -27,7 +27,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hidden", type=str, default="64,64")
     parser.add_argument("--activation", type=str, default="tanh", choices=["relu", "tanh", "sigmoid"])
     parser.add_argument("--dropout", type=float, default=0.0)
-    parser.add_argument("--batchnorm", action="store_true")
+    parser.add_argument("--batchnorm", action="store_true", default=False)
     parser.add_argument("--bn-momentum", type=float, default=0.9)
     parser.add_argument("--bn-eps", type=float, default=1e-5)
     parser.add_argument("--gpu", type=int, default=4)
@@ -44,7 +44,11 @@ def mse_loss(pred, target, xp) -> tuple[float, object]:
     return loss, grad
 
 
-def save_loss_curve(losses: list[float], out_path: str) -> None:
+def mae_metric(pred, target, xp) -> float:
+    return float(xp.mean(xp.abs(pred - target)).item())
+
+
+def save_mae_curve(maes: list[float], out_path: str) -> None:
     width, height = 1000, 600
     margin_left, margin_right = 80, 30
     margin_top, margin_bottom = 50, 70
@@ -56,24 +60,24 @@ def save_loss_curve(losses: list[float], out_path: str) -> None:
     x1, y1 = width - margin_right, margin_top
     draw.line((x0, y0, x1, y0), fill="black", width=2)
     draw.line((x0, y0, x0, y1), fill="black", width=2)
-    draw.text((x0 + 5, y1 - 28), "Loss", fill="black")
+    draw.text((x0 + 5, y1 - 28), "MAE", fill="black")
     draw.text((x1 - 40, y0 + 8), "Epoch", fill="black")
-    draw.text((width // 2 - 150, 12), "Regression Training Curve: y = sin(x)", fill="black")
+    draw.text((width // 2 - 170, 12), "Regression MAE Curve: y = sin(x)", fill="black")
 
-    if len(losses) == 0:
+    if len(maes) == 0:
         img.save(out_path)
         return
 
-    y_min = min(losses)
-    y_max = max(losses)
+    y_min = min(maes)
+    y_max = max(maes)
     if abs(y_max - y_min) < 1e-12:
         y_max = y_min + 1e-12
 
     points = []
-    n = len(losses)
-    for i, loss in enumerate(losses):
+    n = len(maes)
+    for i, mae in enumerate(maes):
         px = x0 + (x1 - x0) * (i / max(1, n - 1))
-        py = y0 - (y0 - y1) * ((loss - y_min) / (y_max - y_min))
+        py = y0 - (y0 - y1) * ((mae - y_min) / (y_max - y_min))
         points.append((px, py))
 
     if len(points) >= 2:
@@ -86,7 +90,7 @@ def save_loss_curve(losses: list[float], out_path: str) -> None:
     draw.text((x1 - 15, y0 + 8), str(n), fill="black")
     draw.text((8, y0 - 6), f"{y_min:.4f}", fill="black")
     draw.text((8, y1 - 6), f"{y_max:.4f}", fill="black")
-    draw.text((x0 + 10, y1 + 8), f"Final loss: {losses[-1]:.6f}", fill="black")
+    draw.text((x0 + 10, y1 + 8), f"Final MAE: {maes[-1]:.6f}", fill="black")
     img.save(out_path)
 
 
@@ -112,22 +116,22 @@ def main() -> None:
         adam_eps=args.adam_eps,
     )
 
-    history = []
+    mae_history = []
     for _ in range(args.epochs):
         x = rng.uniform(-np.pi, np.pi, size=(args.batch_size, 1)).astype(xp.float32)
         y = xp.sin(x)
         pred = model.forward(x, training=True)
         loss, grad = mse_loss(pred, y, xp)
         model.backward(grad, lr=args.lr)
-        history.append(loss)
+        mae_history.append(mae_metric(pred, y, xp))
 
     os.makedirs(args.output_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    fig_path = os.path.join(args.output_dir, f"regression_loss_{timestamp}.png")
+    fig_path = os.path.join(args.output_dir, f"regression_mae_{timestamp}.png")
 
-    save_loss_curve(history, fig_path)
+    save_mae_curve(mae_history, fig_path)
 
-    print(f"Training finished. Final train loss: {history[-1]:.6f}")
+    print(f"Training finished. Final train MAE: {mae_history[-1]:.6f}")
     print(f"Saved figure: {fig_path}")
 
 
