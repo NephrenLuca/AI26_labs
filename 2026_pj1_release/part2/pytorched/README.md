@@ -1,19 +1,19 @@
-# Part2 PyTorch CNN - Handwritten Hanzi Classification
+# 第二部分 PyTorch CNN - 手写汉字分类
 
-This directory contains a complete PyTorch implementation for the Part2 task:
-- 12-class handwritten Hanzi classification
-- custom CNN (no pretrained model)
-- single-GPU and multi-GPU training
+本目录提供了第二部分任务的完整 PyTorch 实现，主要特性如下：
+- 12 类手写汉字分类
+- 自定义 CNN（不使用预训练模型）
+- 支持单卡与多卡 GPU 训练
 
-## 1. Environment
+## 1. 环境安装
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## 2. Data layout
+## 2. 数据目录结构
 
-Expected ImageFolder structure:
+程序使用 `ImageFolder` 格式读取数据，目录应为：
 
 ```text
 part2/train/
@@ -23,48 +23,83 @@ part2/train/
   12/*.bmp
 ```
 
-By default, `train.py` reads `../train` (relative to `pytorched`), which matches your current project layout.
+默认情况下，`train.py` 会读取 `../train`（相对于 `pytorched` 目录），与你当前工程结构一致。
 
-## 3. Train
+## 3. 训练
 
-### Single GPU example
+### 单卡训练示例
 
 ```bash
 python train.py --device cuda --gpu-ids 0 --epochs 40 --batch-size 128
 ```
 
-### Use GPU 4-7 (your scenario)
+### 使用 GPU 4-7 训练
 
 ```bash
 python train.py --device cuda --gpu-ids 4,5,6,7 --epochs 50 --batch-size 256
 ```
 
-If your runtime uses `CUDA_VISIBLE_DEVICES`, keep `--gpu-ids` consistent with visible indices.
+如果运行环境设置了 `CUDA_VISIBLE_DEVICES`，请保证 `--gpu-ids` 与可见卡编号一致。
 
-## 4. Outputs
+## 4. 模型结构说明（HanziCNN）
 
-Training saves files into `./checkpoints`:
-- `best_model.pt`: best validation checkpoint
-- `history.json`: per-epoch metrics
-- `class_names.json`: label-name mapping
+模型定义在 `models.py`，整体结构为“4 个卷积块 + 全局池化 + 两层全连接分类头”。
 
-Also saves matplotlib figures into current working directory:
-- `loss_curve.png`: train/val loss vs epoch
-- `confusion_matrix.png`: final validation confusion matrix (from best checkpoint)
+### 4.1 输入
+- 输入通道：1（灰度图）
+- 默认输入尺寸：`64 x 64`（由 `train.py` 的 `--img-size` 控制）
 
-## 5. Inference
+### 4.2 特征提取部分（4 个 ConvBlock）
+
+每个 `ConvBlock` 结构：
+- `Conv2d(3x3, padding=1, bias=False)`
+- `BatchNorm2d`
+- `ReLU`
+- `Conv2d(3x3, padding=1, bias=False)`
+- `BatchNorm2d`
+- `ReLU`
+- `MaxPool2d(2x2)`
+- 可选 `Dropout2d`
+
+4 个块的通道变化与 Dropout：
+- Block1：`1 -> 32`，`Dropout2d(p=0.05)`
+- Block2：`32 -> 64`，`Dropout2d(p=0.10)`
+- Block3：`64 -> 128`，`Dropout2d(p=0.15)`
+- Block4：`128 -> 256`，`Dropout2d(p=0.20)`
+
+若输入为 `64 x 64`，经过 4 次 `MaxPool2d(2x2)` 后，特征图尺寸变为 `4 x 4`。
+
+### 4.3 分类头
+- `AdaptiveAvgPool2d((1,1))`：将 `256 x 4 x 4` 压缩为 `256 x 1 x 1`
+- `Flatten`
+- `Linear(256, 128) + ReLU + Dropout(0.3)`
+- `Linear(128, num_classes)`，其中 `num_classes=12`
+
+最终输出为 12 维 logits，用于交叉熵损失训练。
+
+## 5. 训练输出
+
+训练过程会在 `./checkpoints` 下保存：
+- `best_model.pt`：验证集最优模型
+- `history.json`：每个 epoch 的指标记录
+- `class_names.json`：类别索引与类别名映射
+
+并在当前运行目录保存 matplotlib 图像：
+- `loss_curve.png`：训练/验证 loss 随 epoch 变化曲线
+- `confusion_matrix.png`：基于最优模型计算的最终验证集混淆矩阵
+
+## 6. 推理
 
 ```bash
 python predict.py --image ../train/1/609.bmp --checkpoint ./checkpoints/best_model.pt --device cuda
 ```
 
-`predict.py` reads images via `matplotlib` (no direct `PIL` import in project code).
+`predict.py` 使用 `matplotlib` 读取图片，不直接依赖 `Pillow`。
 
-## 6. Important implementation details
+## 7. 训练细节
 
-- Model: custom `HanziCNN` in `models.py` (Conv-BN-ReLU blocks + pooling + classifier).
-- Data split: stratified train/val split from the training folder.
-- Loss: cross entropy.
-- Optimizer: AdamW.
-- LR schedule: cosine annealing.
-- Overfitting mitigation (non-bonus): augmentation, weight decay, dropout, batch norm.
+- 数据划分：分层 train/val 划分
+- 损失函数：`CrossEntropyLoss`
+- 优化器：`AdamW`
+- 学习率策略：`CosineAnnealingLR`
+- 抑制过拟合（非 Bonus）：数据增强、权重衰减、Dropout、BatchNorm
