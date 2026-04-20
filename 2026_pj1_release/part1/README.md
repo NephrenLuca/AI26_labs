@@ -14,6 +14,7 @@
 - `nn.py`：核心 `NeuralNetwork` 实现（Linear + 激活 + BN + Dropout + 反向传播）
 - `train_regression.py`：回归训练脚本
 - `train_classification.py`：分类训练脚本
+- `infer_classification.py`：加载已有 ckpt 进行推理 / 验证集评估 / 单图预测
 - `requirements.txt`：基础依赖
 - `__init__.py`：包导出
 
@@ -97,7 +98,7 @@ pip install cupy-cuda12x
 ### 回归训练
 
 ```bash
-python -m part1.train_regression --gpu 4 --epochs 2000 --batch-size 128 --lr 0.01 --activation tanh --batchnorm --dropout 0.1
+python -m part1.train_regression --gpu 4 --epochs 1000 --batch-size 128 --lr 0.01 --activation tanh
 ```
 
 常用参数：
@@ -146,6 +147,48 @@ python -m part1.train_classification --data-dir part1/train --gpu 4 --epochs 200
 python -m part1.train_regression --help
 python -m part1.train_classification --help
 ```
+
+### 使用已有 ckpt 推理 / 验证
+
+训练会保存 `classification_best_*.npz`。使用 `infer_classification.py` 可以在不重新训练的情况下加载该 ckpt 并进行评估或单图预测。
+
+在整个数据集上评估：
+
+```bash
+python -m part1.infer_classification --ckpt part1/classification_best_20260413_134341.npz --data-dir part1/train --no-cuda
+```
+
+复现训练时的验证集并评估（需保持 `--val-ratio` 与 `--seed` 与训练时相同）：
+
+```bash
+python -m part1.infer_classification --ckpt part1/classification_best_20260413_134341.npz --data-dir part1/train --split val --val-ratio 0.2 --seed 42 --no-cuda
+```
+
+预测单张图片（打印 top-k 概率）：
+
+```bash
+python -m part1.infer_classification --ckpt part1/classification_best_20260413_134341.npz --data-dir part1/train --image path/to/some.bmp --topk 3 --no-cuda
+```
+
+常用参数：
+
+- `--ckpt`：必填，`classification_best_*.npz` 路径
+- `--data-dir`：仅用于读取类别名（子文件夹顺序即 label 顺序），默认评估该目录
+- `--image`：若提供，则只对单张图做预测，不做整体评估
+- `--split all/val/train`：评估子集；`val`/`train` 需与训练一致的 `--val-ratio` `--seed`
+- `--img-size 28,28`：必须与训练时一致（ckpt 会自动校验 `H*W` 与输入维度）
+- `--activation relu/tanh/sigmoid`：必须与训练时一致（ckpt 不记录激活函数）
+- `--batchnorm auto/on/off`：默认 `auto`，从 ckpt 的 running 统计量自动判断
+- `--save-misclassified`：在 `--split all` 模式下，将误分类样本写入 CSV
+- `--no-figure`：不保存混淆矩阵图片
+- `--gpu 4` / `--no-cuda`：设备选择
+- `--batch-size 512`：推理批大小
+
+输出：
+
+- 终端打印整体准确率、每类准确率、网络结构、BN 是否启用
+- 默认保存 `classification_infer_confusion_*.png`（混淆矩阵）
+- 可选保存 `classification_infer_misclassified_*.csv`（误分类清单）
 
 ---
 
