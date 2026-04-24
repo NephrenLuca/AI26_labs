@@ -2,10 +2,10 @@
 
 本目录是纯手写轮子版本：
 - 不使用 `torch`、`torchvision` 等深度学习框架
-- 使用 `cupy` 在 GPU 上实现 CNN 前向与反向传播
+- 通过 `backend.py` 抽象数组库：**GPU 用 `cupy`，CPU 用 `numpy`**
 - 手写参数系统、损失函数、优化器和训练循环
 - 支持输出训练曲线和混淆矩阵
-- 默认在 `GPU4` 上运行
+- 默认在 `GPU4` 上运行；无 CUDA 环境时可用 `--device cpu` 回退到纯 numpy
 
 ## 1. 安装依赖
 
@@ -13,7 +13,8 @@
 pip install -r requirements.txt
 ```
 
-如果你的 CUDA/驱动环境不同，可将 `cupy-cuda12x` 替换为对应版本的 cupy 包。
+- GPU 训练需要 `cupy`，如果你的 CUDA/驱动环境不同，可将 `cupy-cuda12x` 替换为对应版本的 cupy 包。
+- CPU 训练只需要 `numpy`（`matplotlib` 已依赖），`cupy` 可以不装。
 
 ## 2. 目录结构
 
@@ -31,10 +32,11 @@ part2/train/
 
 ## 3. 代码结构
 
+- `backend.py`：数组库抽象，根据 `UNPYTORCHED_DEVICE` 选择 `numpy` 或 `cupy`
 - `mynn.py`：手写 `Parameter/Module`、`Conv2d/MaxPool2d/ReLU/Linear`、`CrossEntropyLoss`、`AdamW`
 - `model.py`：基于手写层拼装 `HanziCNN`
-- `train.py`：纯 cupy 训练、验证、保存、绘图
-- `predict.py`：纯 cupy 推理
+- `train.py`：训练、验证、保存、绘图（CPU/GPU 两用）
+- `predict.py`：推理（CPU/GPU 两用）
 
 ## 4. 网络结构（HanziCNN）
 
@@ -52,17 +54,29 @@ part2/train/
 - `CrossEntropyLoss`：手写 softmax + NLL 梯度
 - `AdamW`：手写一阶/二阶动量更新
 
-## 5. 训练（GPU4）
+## 5. 训练
 
-推荐命令：
+### 5.1 GPU 训练（默认）
 
 ```bash
-python train.py --gpu-id 4 --epochs 20 --batch-size 32
+python train.py --device gpu --gpu-id 4 --epochs 20 --batch-size 32
 ```
 
 说明：
-- 脚本会在启动时执行 `cp.cuda.Device(4).use()`（由 `--gpu-id` 控制）。
-- 该版本不依赖 PyTorch，但依赖 CUDA 可用的 cupy 运行时。
+- `--device gpu` 为默认值，脚本会执行 `cp.cuda.Device(<gpu_id>).use()`。
+- 依赖 CUDA 可用的 cupy 运行时。
+
+### 5.2 CPU 训练
+
+```bash
+python train.py --device cpu --epochs 5 --batch-size 16
+```
+
+说明：
+- CPU 模式下底层切换为 `numpy`，不需要安装 `cupy`。
+- 由于 `Conv2d` 的前向/反向是显式 Python 循环（未用 im2col 或 cuDNN），
+  CPU 速度**远慢于 GPU**，建议将 `--epochs` 和 `--batch-size` 调小用于调试/验证正确性，
+  不建议用于完整训练。
 
 ## 6. 训练输出
 
@@ -78,6 +92,16 @@ python train.py --gpu-id 4 --epochs 20 --batch-size 32
 
 ## 7. 推理
 
+GPU：
+
 ```bash
-python predict.py --gpu-id 4 --image ../train/1/609.bmp --checkpoint ./checkpoints/best_model.npz --meta ./checkpoints/meta.json
+python predict.py --device gpu --gpu-id 4 --image ../train/1/609.bmp --checkpoint ./checkpoints/best_model.npz --meta ./checkpoints/meta.json
 ```
+
+CPU：
+
+```bash
+python predict.py --device cpu --image ../train/1/609.bmp --checkpoint ./checkpoints/best_model.npz --meta ./checkpoints/meta.json
+```
+
+> 注：同一份 `best_model.npz` 在 GPU/CPU 两种后端间可以互通（`.npz` 本质是 numpy 格式）。

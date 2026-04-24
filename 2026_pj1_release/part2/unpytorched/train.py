@@ -1,22 +1,9 @@
 import argparse
-import json
-import random
-from pathlib import Path
-from typing import Dict, List, Tuple
-
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import cupy as cp
-from tqdm import tqdm
-
-from model import HanziCNN
-from mynn import AdamW, CrossEntropyLoss
+import os
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Pure handwritten CNN training with cupy on GPU.")
+    parser = argparse.ArgumentParser(description="Pure handwritten CNN training with numpy/cupy.")
     parser.add_argument("--data-dir", type=str, default="../train")
     parser.add_argument("--save-dir", type=str, default="./checkpoints")
     parser.add_argument("--plot-dir", type=str, default=".")
@@ -27,13 +14,42 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--img-size", type=int, default=64)
     parser.add_argument("--val-ratio", type=float, default=0.15)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--gpu-id", type=int, default=4, help="Use physical GPU id, default GPU4")
+    parser.add_argument(
+        "--device",
+        type=str,
+        choices=["cpu", "gpu"],
+        default="gpu",
+        help="Backend: 'gpu' uses cupy, 'cpu' uses numpy.",
+    )
+    parser.add_argument("--gpu-id", type=int, default=4, help="Physical GPU id (only used when --device gpu).")
     return parser.parse_args()
 
 
-def set_seed(seed: int) -> None:
-    random.seed(seed)
-    cp.random.seed(seed)
+# The backend (numpy vs cupy) must be decided **before** importing modules
+# that rely on it (mynn / model). We therefore parse CLI args first and set
+# UNPYTORCHED_DEVICE, then import the rest of the stack.
+_ARGS = parse_args()
+os.environ["UNPYTORCHED_DEVICE"] = _ARGS.device
+
+import json
+import random
+from pathlib import Path
+from typing import Dict, List, Tuple
+
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from tqdm import tqdm
+
+from backend import xp as cp, is_gpu, set_gpu_device, to_numpy, seed as backend_seed
+from model import HanziCNN
+from mynn import AdamW, CrossEntropyLoss
+
+
+def set_seed(value: int) -> None:
+    random.seed(value)
+    backend_seed(value)
 
 
 def resize_nearest(img: cp.ndarray, size: int) -> cp.ndarray:
@@ -137,7 +153,7 @@ def plot_loss_curve(history: List[Dict], path: Path) -> None:
 
 def plot_confusion_matrix(cm: cp.ndarray, class_names: List[str], path: Path) -> None:
     fig, ax = plt.subplots(figsize=(8, 7))
-    cm_np = cp.asnumpy(cm)
+    cm_np = to_numpy(cm)
     im = ax.imshow(cm_np, cmap=plt.cm.Blues)
     ax.figure.colorbar(im, ax=ax)
     ax.set_xticks(range(len(class_names)))
@@ -176,8 +192,12 @@ def load_state_npz(path: Path) -> Dict[str, cp.ndarray]:
 
 
 def main() -> None:
-    args = parse_args()
-    cp.cuda.Device(args.gpu_id).use()
+    args = _ARGS
+    if is_gpu:
+        set_gpu_device(args.gpu_id)
+        print(f"[device] Using cupy on GPU{args.gpu_id}")
+    else:
+        print("[device] Using numpy on CPU")
     set_seed(args.seed)
 
     save_dir = Path(args.save_dir).resolve()

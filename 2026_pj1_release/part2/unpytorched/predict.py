@@ -1,10 +1,6 @@
 import argparse
+import os
 from pathlib import Path
-
-import matplotlib.pyplot as plt
-import cupy as cp
-
-from model import HanziCNN
 
 
 def parse_args():
@@ -12,8 +8,28 @@ def parse_args():
     parser.add_argument("--image", type=str, required=True)
     parser.add_argument("--checkpoint", type=str, default="./checkpoints/best_model.npz")
     parser.add_argument("--meta", type=str, default="./checkpoints/meta.json")
+    parser.add_argument(
+        "--device",
+        type=str,
+        choices=["cpu", "gpu"],
+        default="gpu",
+        help="Backend: 'gpu' uses cupy, 'cpu' uses numpy.",
+    )
     parser.add_argument("--gpu-id", type=int, default=4)
     return parser.parse_args()
+
+
+# Backend must be selected before ``backend`` / ``model`` / ``mynn`` get
+# imported.
+_ARGS = parse_args()
+os.environ["UNPYTORCHED_DEVICE"] = _ARGS.device
+
+import json
+
+import matplotlib.pyplot as plt
+
+from backend import xp as cp, is_gpu, set_gpu_device
+from model import HanziCNN
 
 
 def resize_nearest(img: cp.ndarray, size: int) -> cp.ndarray:
@@ -24,9 +40,12 @@ def resize_nearest(img: cp.ndarray, size: int) -> cp.ndarray:
 
 
 def main():
-    args = parse_args()
-    import json
-    cp.cuda.Device(args.gpu_id).use()
+    args = _ARGS
+    if is_gpu:
+        set_gpu_device(args.gpu_id)
+        print(f"[device] Using cupy on GPU{args.gpu_id}")
+    else:
+        print("[device] Using numpy on CPU")
 
     with open(Path(args.meta).resolve(), "r", encoding="utf-8") as f:
         meta = json.load(f)

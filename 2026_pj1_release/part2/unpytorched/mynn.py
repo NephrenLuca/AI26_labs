@@ -1,7 +1,7 @@
 import math
 from typing import Dict, Iterator, List, Tuple, Union
 
-import cupy as cp
+from backend import xp as cp
 
 
 def _to_2tuple(v: Union[int, Tuple[int, int]]) -> Tuple[int, int]:

@@ -341,5 +341,5 @@ PyTorch 主版本的训练/验证 Loss 曲线（见 `part2/pytorched/results/los
 | 分类：12 汉字 / MLP | MLP [784, 1024, 512, 256, 12] + BN + Dropout | 数据增强 + plateau 调度 + best ckpt | **val acc = 0.9899** |
 | 分类：12 汉字 / CNN | `HanziCNN`（PyTorch） | AdamW + CosineLR + 多层 Dropout + 数据增强 | **val acc = 0.9991** |
 | Bonus：手写 CNN | 同结构但基于 cupy 手写 | 手写 Conv/Pool/CE/AdamW 前向反向 | 跑通，作为理论验证 |
-
+  
 

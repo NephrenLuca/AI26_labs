@@ -1,3 +1,5 @@
-cupy-cuda12x
+numpy
 matplotlib
 tqdm
+# Optional: only required for --device gpu
+cupy-cuda12x
