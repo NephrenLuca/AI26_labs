@@ -36,7 +36,8 @@ part2/train/
 - `mynn.py`：手写 `Parameter/Module`、`Conv2d/MaxPool2d/ReLU/Linear`、`CrossEntropyLoss`、`AdamW`
 - `model.py`：基于手写层拼装 `HanziCNN`
 - `train.py`：训练、验证、保存、绘图（CPU/GPU 两用）
-- `predict.py`：推理（CPU/GPU 两用）
+- `predict.py`：单张图片推理（CPU/GPU 两用）
+- `infer_test.py`：对整个测试集批量推理，输出准确率 + 混淆矩阵（CPU/GPU 两用）
 
 ## 4. 网络结构（HanziCNN）
 
@@ -92,6 +93,8 @@ python train.py --device cpu --epochs 5 --batch-size 16
 
 ## 7. 推理
 
+### 7.1 单张图片
+
 GPU：
 
 ```bash
@@ -103,5 +106,35 @@ CPU：
 ```bash
 python predict.py --device cpu --image ../train/1/609.bmp --checkpoint ./checkpoints/best_model.npz --meta ./checkpoints/meta.json
 ```
+
+### 7.2 整个测试集批量推理
+
+给定 ckpt 和按 `ImageFolder` 组织的测试目录（`<test-dir>/<class_name>/*.bmp`），
+`infer_test.py` 会对整个测试集做前向，打印整体准确率 + 每类准确率，并保存混淆矩阵 PNG：
+
+GPU：
+
+```bash
+python infer_test.py \
+    --device gpu --gpu-id 4 \
+    --checkpoint ./checkpoints/best_model.npz \
+    --meta ./checkpoints/meta.json \
+    --test-dir ../test
+```
+
+CPU：
+
+```bash
+python infer_test.py \
+    --device cpu \
+    --checkpoint ./checkpoints/best_model.npz \
+    --meta ./checkpoints/meta.json \
+    --test-dir ../test
+```
+
+说明：
+
+- `--meta` 指向训练时保存的 `meta.json`（包含 `class_names` 和 `img_size`）。若省略，脚本会根据测试目录的子文件夹名自动推断类别。
+- 输出 `test_confusion_matrix_<timestamp>.png`（保存到 `--output-dir`，默认当前目录）。
 
 > 注：同一份 `best_model.npz` 在 GPU/CPU 两种后端间可以互通（`.npz` 本质是 numpy 格式）。

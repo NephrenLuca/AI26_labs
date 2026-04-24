@@ -14,7 +14,8 @@
 - `nn.py`：核心 `NeuralNetwork` 实现（Linear + 激活 + BN + Dropout + 反向传播）
 - `train_regression.py`：回归训练脚本
 - `train_classification.py`：分类训练脚本
-- `infer_classification.py`：加载已有 ckpt 进行推理 / 验证集评估 / 单图预测
+- `infer_classification.py`：加载已有分类 ckpt 进行推理 / 验证集评估 / 单图预测
+- `infer_regression.py`：加载 `regression_best_*.npz` 在测试集（或合成 `y=sin(x)`）上评估
 - `requirements.txt`：基础依赖
 - `__init__.py`：包导出
 
@@ -170,6 +171,18 @@ python -m part1.infer_classification --ckpt part1/classification_best_20260413_1
 python -m part1.infer_classification --ckpt part1/classification_best_20260413_134341.npz --data-dir part1/train --image path/to/some.bmp --topk 3 --no-cuda
 ```
 
+在自定义「测试集」目录上推理（同样用 `--data-dir` 指向测试目录，仍保持 ImageFolder 结构）：
+
+```bash
+python -m part1.infer_classification \
+    --ckpt part1/classification_best_20260413_134341.npz \
+    --data-dir path/to/test_set \
+    --split all \
+    --no-cuda
+```
+
+将输出整体准确率、每类准确率，并保存 `classification_infer_confusion_*.png` 作为混淆矩阵。
+
 常用参数：
 
 - `--ckpt`：必填，`classification_best_*.npz` 路径
@@ -189,6 +202,35 @@ python -m part1.infer_classification --ckpt part1/classification_best_20260413_1
 - 终端打印整体准确率、每类准确率、网络结构、BN 是否启用
 - 默认保存 `classification_infer_confusion_*.png`（混淆矩阵）
 - 可选保存 `classification_infer_misclassified_*.csv`（误分类清单）
+
+### 回归任务推理
+
+`train_regression.py` 会在训练结束后保存 `regression_best_*.npz`（权重 + 网络结构元信息）。使用 `infer_regression.py` 在测试集上评估：
+
+从 `.npz` 文件读取测试集（需包含 `x`, `y` 两个数组）：
+
+```bash
+python -m part1.infer_regression \
+    --ckpt part1/regression_best_YYYYMMDD_HHMMSS.npz \
+    --test-file path/to/test.npz \
+    --no-cuda
+```
+
+或在 `[-pi, pi]` 上合成 `y = sin(x)` 测试集：
+
+```bash
+python -m part1.infer_regression \
+    --ckpt part1/regression_best_YYYYMMDD_HHMMSS.npz \
+    --test-samples 2000 \
+    --no-cuda
+```
+
+输出：
+
+- 终端打印 MAE / MSE / RMSE、网络结构、激活函数、BN 是否启用
+- 默认保存 `regression_infer_pred_*.png`（左：pred vs true 曲线；右：残差散点）
+
+> 回归任务不存在「混淆矩阵」，脚本改用 MAE/MSE/RMSE 与预测-真值图来可视化推理质量。
 
 ---
 

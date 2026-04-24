@@ -90,11 +90,32 @@ python train.py --device cuda --gpu-ids 4,5,6,7 --epochs 50 --batch-size 256
 
 ## 6. 推理
 
+### 6.1 单张图片推理
+
 ```bash
 python predict.py --image ../train/1/609.bmp --checkpoint ./checkpoints/best_model.pt --device cuda
 ```
 
 `predict.py` 使用 `matplotlib` 读取图片，不直接依赖 `Pillow`。
+
+### 6.2 对整个测试集批量推理
+
+给定 ckpt 与按 `ImageFolder` 结构组织的测试目录（`<test-dir>/<class_name>/*.bmp`），
+`infer_test.py` 会对整个测试集做前向，打印整体准确率与每类准确率，并保存混淆矩阵 PNG：
+
+```bash
+python infer_test.py \
+    --checkpoint ./checkpoints/best_model.pt \
+    --test-dir ../test \
+    --batch-size 128 \
+    --device cuda
+```
+
+说明：
+
+- ckpt 里保存了训练时的类别顺序。若测试目录的类别文件夹名与训练目录一致（例如都是 `1..12`），脚本会自动对齐标签。
+- 测试目录若缺少某些训练类别，也可以正常评估，只是「缺席」类别将无样本。
+- 输出 `test_confusion_matrix_<timestamp>.png`（保存到 `--output-dir`，默认当前目录）。
 
 ## 7. 训练细节
 

@@ -14,8 +14,10 @@ import matplotlib.pyplot as plt
 
 try:
     from .nn import NeuralNetwork, init_backend
+    from .train_classification import snapshot_model_state
 except ImportError:
     from nn import NeuralNetwork, init_backend
+    from train_classification import snapshot_model_state
 
 
 def parse_args() -> argparse.Namespace:
@@ -70,10 +72,11 @@ def save_mae_curve(train_maes: list[float], val_maes: list[float], out_path: str
 def main() -> None:
     args = parse_args()
     use_cuda = not args.no_cuda
-    xp, _, rng = init_backend(use_cuda=use_cuda, gpu_id=args.gpu, seed=args.seed)
+    xp, to_cpu, rng = init_backend(use_cuda=use_cuda, gpu_id=args.gpu, seed=args.seed)
     hidden_sizes = [int(v) for v in args.hidden.split(",") if v.strip()]
+    layer_sizes = [1, *hidden_sizes, 1]
     model = NeuralNetwork(
-        layer_sizes=[1, *hidden_sizes, 1],
+        layer_sizes=layer_sizes,
         hidden_activation=args.activation,
         output_activation="linear",
         seed=args.seed,
@@ -110,9 +113,23 @@ def main() -> None:
 
     save_mae_curve(train_mae_history, val_mae_history, fig_path)
 
+    # Save checkpoint so that infer_regression.py can reload this model.
+    ckpt_path = os.path.join(args.output_dir, f"regression_best_{timestamp}.npz")
+    state = snapshot_model_state(model, to_cpu)
+    np.savez_compressed(
+        ckpt_path,
+        layer_sizes=np.asarray(layer_sizes, dtype=np.int64),
+        hidden_activation=np.asarray(args.activation),
+        output_activation=np.asarray("linear"),
+        use_batchnorm=np.asarray(bool(args.batchnorm)),
+        dropout=np.asarray(float(args.dropout), dtype=np.float32),
+        **state,
+    )
+
     print(f"Training finished. Final train MAE: {train_mae_history[-1]:.6f}")
     print(f"Training finished. Final val MAE: {val_mae_history[-1]:.6f}")
     print(f"Saved figure: {fig_path}")
+    print(f"Saved checkpoint: {ckpt_path}")
 
 
 if __name__ == "__main__":
