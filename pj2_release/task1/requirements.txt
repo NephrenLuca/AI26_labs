@@ -1,0 +1,9 @@
+numpy>=1.21
+# check.py 评测依赖
+scikit-learn>=1.0
+
+# ---- GPU 加速（可选） ---------------------------------------------------
+# 在 GPU 服务器上安装与本机 CUDA 版本匹配的 CuPy 包，例如：
+#   CUDA 12.x : pip install cupy-cuda12x
+#   CUDA 11.x : pip install cupy-cuda11x
+# 仅在 ``--device cuda`` 时被 import；CPU 上不需要 cupy。

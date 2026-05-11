@@ -1,0 +1,9 @@
+numpy>=1.21
+# check.py 评测依赖
+scikit-learn>=1.0
+# CRF 训练 / 推理
+# Linux GPU: 服务器上请用与 CUDA 版本匹配的 wheel 安装，例如：
+#   CUDA 12.x: pip install torch --index-url https://download.pytorch.org/whl/cu121
+#   CUDA 11.8: pip install torch --index-url https://download.pytorch.org/whl/cu118
+# 仅 CPU 运行也可以直接 pip install torch
+torch>=1.13

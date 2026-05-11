@@ -1,0 +1,22 @@
+# ===== 任务三：Transformer + CRF NER =====
+
+# 评测
+scikit-learn>=1.0
+
+# 深度学习框架（任选其一并匹配自身 CUDA 版本）：
+#   CUDA 12.1 : pip install torch --index-url https://download.pytorch.org/whl/cu121
+#   CUDA 11.8 : pip install torch --index-url https://download.pytorch.org/whl/cu118
+#   CPU only  : pip install torch --index-url https://download.pytorch.org/whl/cpu
+torch>=2.0
+
+# Transformer 预训练模型加载
+transformers>=4.30
+tokenizers>=0.13
+
+# 数值
+numpy>=1.21
+
+# 镜像加速（可选）：HF_ENDPOINT=https://hf-mirror.com 即可走 hf-mirror。
+# 或预先 huggingface-cli download bert-base-chinese 到本地，
+# 再用 --model_name_or_path /path/to/local。
+huggingface_hub>=0.16
